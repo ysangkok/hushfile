@@ -1,0 +1,82 @@
+swagger: '2.0'
+info:
+  title: Minimal Hushfile API draft
+  description: To edit this API, paste [the source](https://github.com/ysangkok/hushfile/blob/gh-pages/minimal-v1.yaml) into [the editor](http://editor.swagger.io/). When satisfied, edit the file in the source repo and make GitHub do the fork/commit/PR thing in one step.
+  version: v1
+
+host: hushfile.it
+
+schemes:
+  - https
+
+basePath: /api
+produces:
+  - application/json
+  - application/octet-stream
+consumes:
+  - application/json
+paths:
+  /:
+    put:
+      parameters:
+        - name: deletekey
+          in: query
+          description: Key that makes it possible to delete this file.
+          type: string
+        - name: expires
+          in: query
+          description: Date-time of automatic deletion by the server. Try to parse as ISO 8601, if that doesn't work, parse as UNIX time (UTC), see Python/calendar.timegm.
+          type: string
+          format: date-time
+      responses:
+        201:
+          description: Hushfile created
+        400:
+          description: Bad request. Schema not satisfied.
+        default:
+          description: Internal server error, maybe it misconfigured.
+  /{id}:
+    parameters:
+      - name: id
+        in: path
+        description: ID of the file.
+        required: true
+        type: string
+    get:
+      description: |
+        Returns the bytes of a hushfiles.
+      produces:
+        - application/octet-stream
+      responses:
+        200:
+          description: An array of products
+        404:
+          description: ID not found.
+        default:
+          description: Unexpected error
+          schema:
+            $ref: '#/definitions/Error'
+    delete:
+      description:
+        Deletes a hushfile.
+      responses:
+        200:
+          description: OK, hushfile deleted.
+        403:
+          description: A deletekey is needed and yours was wrong.
+        404:
+          description: ID not found.
+        default:
+          description: Server error.
+definitions:
+  Error:
+    properties:
+      code:
+        type: integer
+        format: int32
+        minimum: 100
+        maximum: 600
+      message:
+        type: string
+      fields:
+        type: string
