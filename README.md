@@ -1,136 +1,79 @@
-hushfile
-========
-hushfile is a file sharing service with clientside encryption. Idea and initial code by Thomas Steen Rasmussen / Tykling, 2013.
+Minimal API examples
+===
 
-This code is released under 2-clause BSD license, so you are free to use this code to run your own hushfile service, modify the code, or whatever you like.
+hushfile-web can individually encrypt chunks and [PUT at /](http://ysangkok.github.io/swagger-ui/dist/index.html?url=/hushfile/minimal-v1.yaml#!/default/_put).
 
-Theory of Operation
-====================
-The hushfile server is pretty simple, most of the hard work is done by the clients. The server basically takes requests and replies with HTTP status codes and json blobs. The server has an upload function which returns a fileid, the rest of the operations require an existing fileid.
+Say the encrypted chunks (they could of course be arbitrary bytes in a real scenario) are as follows:
 
-The following describes the client workflow. The details are probably only relevant if you are curious or if you are implementing a new client.
+* chunk 1: `ABCD`,
+* chunk 2: `0123456789`,
+* chunk 3: `xy`
 
-A client has two basic jobs: uploading and downloading. This section describes how a client operates, based on the hushfile/hushfile-web client. If you are implementing a new client read the API file for details.
+After all chunks have been uploaded with deletekeys (`lol` for chunk 1 `bob` for chunk 2, `dan` for chunk 3) and no expiry, maybe they were assigned the Hushfile IDs:
 
+* `absauidsahui` (chunk 1)
+* `bsjioasjidao` (chunk 2)
+* `ccjsakasiojd` (chunk 3)
 
-Uploading
-=============
-###### 0. Call serverinfo API function
-Initialize client by calling the serverinfo API function to display the servers max file size (if any) and max retention time (if any) to the user.
+The client has the ID's, and their deletekeys. Hushfile-web can generate a TOC-and-metadata file:
 
-###### 1. Pick file
-A file is selected by the user.
+```
+{
+	"metadata": "jsaiodcnsuiovdshdsiuovhs ENCRYPTED METADATA (base64) dsjiuoadjsaiodj",
+	"chunklengths": [
+		4,
+		10,
+		2
+	]
+}
+```
 
-###### 2. Check max file size
-The client must check the file size against the maxsize value returned by the serverinfo API function, and display an error if it is too large.
+And upload it as it's own hushfile. This is assigned ID `DWJQIO` and the client chose the deletekey `jan`.
 
-###### 3. Decide on chunking
-The client should decide whether or not to use chunking, and a chunksize. The serverinfo API function returns a maxchunksize value which should be taken into consideration.
+The client now makes a request to [`POST /merge`](http://ysangkok.github.io/swagger-ui/dist/index.html?url=/hushfile/minimal-v1.yaml#!/default/merge_post) that looks roughly like this:
 
-###### 4. Generate passwords
-The client must generate an encryption password. If the user wants the file to be deletable a deletepassword should also be generated. It should be possible but difficult for a user to choose custom passwords. Long automatically generated alphanumeric password are the most secure.
+```
+POST /api/merge HTTP/1.1
+Host: hushfile.it
+Content-Type: application/x-www-form-urlencoded
 
-###### 5. Generate metadata json
-The client must generate a json object containing four fields if the file should be deletable:
-	`{"filename": "secretfile.txt", "mimetype": "text/plain", "filesize": "532", "deletepassword": "vK36ocTGHaz8OYcjHX5voD8j3MgsGkg8JAXAefqe"}`
-If the file should not be deletable the `deletepassword` field should be omitted.
+id=DWJQIO&id=absauidsahui&id=bsjioasjidao&id=ccjsakasiojd&deletekey=d5
+```
 
-###### 6. Encrypt metadata json
-The client must encrypt the metadata json with the encryption password.
+(the client could have specified a expiry date, but chose not to)
 
-###### 7. Encrypt first file chunk
-The client must encrypt the first chunk of the file. If the servers permitted chunksize and the clients desired chunksize are both equal to or larger than than the total filesize there will only be one chunk.
+On the server, the data could have been stores like this:
+```
+.
+├── [       4120]  absauidsahui
+│   ├── [          4]  data
+│   └── [         20]  serverdata
+├── [       4126]  bsjioasjidao
+│   ├── [         10]  data
+│   └── [         20]  serverdata
+├── [       4118]  ccjsakasiojd
+│   ├── [          2]  data
+│   └── [         20]  serverdata
+└── [       4242]  DWJQIO
+    ├── [        126]  data
+    └── [         20]  serverdata
 
-###### 8. Upload first chunk and metadata
-The client must do a HTTP post to `https://servername/api/upload` with five fields: `cryptofile`, `metadata`, `deletepassword`, `chunknumber` and `finishupload`. The number of the first chunk is `0`. The `finishupload` field must be set to true if this is the only chunk, and false if there are additional chunks. The metadata must be uploaded with the first chunk.
+       20702 bytes used in 4 directories, 8 files
+```
 
-###### 9. Receive response with fileid and uploadpassword
-The client will get a HTTP 200 response with a JSON body which contains six fields:
-`{"fileid": "51928de7aba77", "status": "OK", "chunks": "1", "totalsize": "12345", "finished": false, "uploadpassword": "abc123DEF456"}`
+The server can save uploader IP's in an array in the individual serverdata files.
 
-If the upload is finished `uploadpassword` will be empty, otherwise it contains the password neccesary to upload new chunks.
+Since a hushfile can't be edited, the merge can simply make a new directory and hardlink (also on windows) the data chunks into the new directory. Lets say the new hushfile has the ID `POIUYT`. The server could do this:
 
-###### 10. Encrypt and upload remaining chunks
-If any chunks remain the client must encrypt and upload each one with a HTTP post to `https://servername/api/upload` with five fields: `fileid`, `cryptofile`, `chunknumber`, `uploadpassword` and `finishupload`. This can be done in parallel if desired. 
+```
+ln DWJQIO/data.0 POIUYT/data.0
+ln absauidsahui/data.0 POIUYT/data.1
+ln bsjioasjidao/data.0 POIUYT/data.2
+ln ccjsakasiojd/data.0 POIUYT/data.3
+```
 
-When the last chunk is uploaded the `finishupload` field should be set to true, or the upload can be marked as finished by using the seperate `finishupload` API call. 
+and make a new serverdata file, maybe copying the uploader IP's from the individual chunks. The expiry date would be set anew, but this isn't really a problem since with any API that allows anonymous reads, the expiry won't be very effective.
 
-For each chunk uploaded successfully the client will get a HTTP 200 response with a JSON body like this:
-`{"fileid": "51928de7aba77", "status": "OK", "chunks": "3", "totalsize": "1234567", "finished": false}`
+Say a client gets a link to `hushfile.it/POIUYT`. Hushfile-web will send a request for the first 100 bytes and see if it has a complete JSON object (the data from the file uploaded as DWJQIO) yet. When feeding the bytes into [oboejs](http://oboejs.com/) or [clarinet](https://github.com/dscape/clarinet), it doesn't matter that there are extranous binary data after the TOC-and-metadata, cause a SAX style parser will fire the event for the object before getting syntax errors. If the 100 bytes are not enough, the client keeps requesting more until it finds a complete object.
 
-###### 11. Present link to the user
-The client must finally present a link to the user, in the format `https://servername/fileid#password`
-
-
-Downloading
-===============
-###### 1. Get hushfile URL
-A hushfile URL is supplied by the user
-
-###### 2. Check URL and fileid validity
-The client checks if the fileid is a valid and finished upload on the server, by querying `https://servername/api/exists?fileid=51928de7aba77`
-
-###### 3. If fileid is valid
-If the fileid is valid and the upload is finished the server will reply with a HTTP 200 with a JSON body like so: `{"fileid": "51928de7aba77", "exists": true, "chunks": 2, "totalsize": 123432, "finished": true}`
-
-###### 4. If fileid is valid but unfinished
-If the fileid is valid but the upload has not been finished the server will reply with a "HTTP 412 Precondition Failed" with a JSON body like so: `{"fileid": "51928de7aba77", "exists": true, "chunks": 2, "totalsize": 123432, "finished": false}`
-
-###### 5. If fileid is invalid
-If the fileid is invalid the server will reply with a HTTP 404 with a JSON body like so: `{"fileid": "51928de7aba77", "exists": false, "chunks": 0, "totalsize": 0, "finished": false}`
-
-###### 6. If password is missing
-If a password was not supplied, the client must ask the user for a password.
-
-###### 7. Download metadata
-The client must then download the metadata from the server by querying `https://servername/api/metadata?fileid=51928de7aba77`
-
-###### 8. Decrypt metadata
-The client must then decrypt the metadata using the supplied password.
-
-###### 9. If decrypt fails
-If the data cannot be decrypted or the decrypted data is not valid JSON, the client must display an error to the user and ask for a new password, and try decrypting again.
-
-###### 10. Metadata json
-The decrypted JSON metadata contains four fields and could look like this: `{"filename": "secretfile.txt", "mimetype": "text/plain", "filesize": "532", "deletepassword": "vK36ocTGHaz8OYcjHX5voD8j3MgsGkg8JAXAefqe"}`
-
-###### 11. Get uploader IP
-The client must now get the IP address of the uploader by sending a request to `https://servername/api/ip?fileid=51928de7aba77`
-
-###### 12. Present download and delete options to user
-The client must present the metadata and IP to the user, and give the user two options, download and delete.
-
-###### 13. To delete file
-If the user wants to delete the file, the client can do that by sending a request to `https://servername/api/delete?fileid=51928de7aba77&deletepassword=vK36ocTGHaz8OYcjHX5voD8j3MgsGkg8JAXAefqe`. 
-
-If the deletion is successful the server responds with a HTTP 200 and a JSON object like this: `{"fileid": "51928de7aba77", "deleted": true}`
-
-If the deletion fails because the deletepassword is incorrect, the server responds with a HTTP 401 and a JSON object like this: `{"fileid": "51928de7aba77", "deleted": false}`
-
-###### 14. To download a chunk
-If the client wants to download the file, the client can get the data for a given chunk by sending a request to `https://servername/api/file?fileid=51928de7aba77&chunknumber=N` - if there is only one chunk the number is `0`
-
-###### 15. Decrypt downloaded data
-The client must then decrypt the file with the same password as the metadata was decrypted with.
-
-###### 16. Repeat for every chunk
-Repeat for every chunk, put the chunks together when all of them are downloaded.
-
-###### 17. Prompt user to save file
-Finally the client can prompt the user to save the file somewhere.
-
-###### 18. Delete option
-The client should still have an active delete button after download, so a user can delete a file after downloading.
-
-
-3rd Party Components
-=====================
-The following components are used extensively in the code:
-- http://code.google.com/p/crypto-js/
-	Crypto-JS is used to perform encryption and decryption.
-
-- http://twitter.github.io/bootstrap/
-	Twitter Bootstrap is used for styling
-
-- http://fortawesome.github.io/Font-Awesome/
-	Font-Awesome is a great icon collection for use with Twitter Bootstrap
+Now that the client has the TOC, it also knows the offset for the first chunk, since the first chunk starts immediatly after the TOC. It also knows the length of the chunk, since that was encoded into the TOC. The client can now, in parallel, download and decrypt all chunks.
