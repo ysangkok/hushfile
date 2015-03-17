@@ -14,12 +14,10 @@ produces:
   - application/json
   - application/octet-stream
 consumes:
-  - application/json
+  - multipart/form-data
 paths:
   /:
     put:
-      consumes:
-        - multipart/form-data
       parameters:
         - name: deletekey
           in: query
@@ -99,7 +97,7 @@ paths:
         minItems: 1
         items:
           type: string
-        collectionFormat: csv
+        collectionFormat: multi
       responses:
         201:
           description: Hushfile created.
